@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SK 打卡系統</title>
+<title>SK打卡系統</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1b1f3b">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -118,6 +118,21 @@ var currentSelectedType = null;
 var currentUserIP = null;
 var session = null; // { idToken, name, email }
 
+function saveSession(){
+  try {
+    localStorage.setItem('sk_checkin_user', JSON.stringify({ name: session.name, email: session.email }));
+  } catch(e){}
+}
+function loadCachedUser(){
+  try {
+    var raw = localStorage.getItem('sk_checkin_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch(e){ return null; }
+}
+function clearCachedUser(){
+  try { localStorage.removeItem('sk_checkin_user'); } catch(e){}
+}
+
 // ====== 時鐘 ======
 function tickClock(){
   var now = new Date();
@@ -164,12 +179,28 @@ loadIP();
 window.onload = function(){
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
-    callback: handleCredentialResponse
+    callback: handleCredentialResponse,
+    auto_select: true,           // 如果之前用過呢部機登入過，自動幫佢選返同一個account
+    cancel_on_tap_outside: false
   });
   google.accounts.id.renderButton(
     document.getElementById('googleBtn'),
     { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with' }
   );
+
+  // 如果之前登入過（本機有cache），靜默嘗試自動登入，唔使員工再撳掣
+  var cachedUser = loadCachedUser();
+  if (cachedUser){
+    document.getElementById('loginStatus').className = 'status show ok';
+    document.getElementById('loginStatus').textContent = '正在自動登入 ' + cachedUser.name + '...';
+    google.accounts.id.prompt(function(notification){
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()){
+        // 靜默登入唔到（例如token太耐冇用、瀏覽器阻止），要求手動登入一次
+        document.getElementById('loginStatus').className = 'status show err';
+        document.getElementById('loginStatus').textContent = '請重新撳掣登入一次';
+      }
+    });
+  }
 };
 
 function handleCredentialResponse(response){
@@ -186,6 +217,7 @@ function handleCredentialResponse(response){
   .then(function(data){
     if (data.success){
       session = { idToken: idToken, name: data.name, email: data.email };
+      saveSession();
       document.getElementById('userName').textContent = data.name;
       document.getElementById('userEmailDisplay').textContent = data.email;
       document.getElementById('loginSection').style.display = 'none';
@@ -203,6 +235,7 @@ document.getElementById('logoutBtn').onclick = function(){
   session = null;
   currentSelectedType = null;
   document.querySelectorAll('.type-btn').forEach(function(b){ b.classList.remove('active'); });
+  clearCachedUser();
   google.accounts.id.disableAutoSelect();
   document.getElementById('appSection').style.display = 'none';
   document.getElementById('loginSection').style.display = 'flex';
