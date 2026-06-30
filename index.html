@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>打卡系統</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1b1f3b">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#11132b; --panel:#1b1f3b; --accent:#ffb454; --accent-soft:#ffb45422;
+    --text:#f4f2ec; --text-dim:#9a9bbf; --ok:#5fd187; --err:#ff6b6b; --line:#2c3060;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    min-height:100vh;
+    background:radial-gradient(circle at 50% -10%, #262a52 0%, var(--bg) 55%);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang HK","Microsoft JhengHei",sans-serif;
+    color:var(--text); display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card{
+    width:100%; max-width:420px; background:var(--panel);
+    border:1px solid var(--line); border-radius:20px; padding:28px 24px 24px;
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.6);
+  }
+  .clock{text-align:center; margin-bottom:18px;}
+  .clock .time{font-size:42px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums;}
+  .clock .date{color:var(--text-dim); font-size:13px; margin-top:4px;}
+  h1{
+    font-size:15px; font-weight:600; text-align:center; color:var(--text-dim);
+    letter-spacing:2px; text-transform:uppercase; margin:0 0 20px;
+  }
+  label{display:block; font-size:12px; color:var(--text-dim); margin:14px 0 6px; letter-spacing:0.5px;}
+  input, select, textarea{
+    width:100%; background:#00000033; border:1px solid var(--line); border-radius:12px;
+    color:var(--text); padding:13px 14px; font-size:15px; font-family:inherit; appearance:none;
+  }
+  textarea{resize:none; min-height:54px;}
+  .types{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;}
+  .type-btn{
+    border:1px solid var(--line); background:#00000033; color:var(--text);
+    padding:14px 8px; border-radius:12px; font-size:14px; cursor:pointer; transition:all .15s ease;
+  }
+  .type-btn.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600;}
+  .submit-btn{
+    width:100%; margin-top:22px; padding:16px; border:none; border-radius:14px;
+    background:var(--accent); color:#1b1f3b; font-size:16px; font-weight:700;
+    cursor:pointer; transition:opacity .15s ease;
+  }
+  .submit-btn:disabled{opacity:.4; cursor:not-allowed;}
+  .status{
+    margin-top:16px; padding:13px 14px; border-radius:12px; font-size:13px;
+    line-height:1.5; display:none; white-space:pre-line;
+  }
+  .status.show{display:block;}
+  .status.ok{background:#5fd18722; color:var(--ok); border:1px solid #5fd18755;}
+  .status.err{background:#ff6b6b22; color:var(--err); border:1px solid #ff6b6b55;}
+  .ip-line{text-align:center; color:var(--text-dim); font-size:11px; margin-top:16px;}
+  .user-row{
+    display:flex; align-items:center; gap:10px; background:#00000033;
+    border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:18px;
+  }
+  .user-row .name{font-size:14px; font-weight:600;}
+  .user-row .email{font-size:11px; color:var(--text-dim);}
+  .user-row button{
+    margin-left:auto; background:none; border:none; color:var(--text-dim);
+    font-size:12px; text-decoration:underline; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="clock">
+    <div class="time" id="timeNow">--:--:--</div>
+    <div class="date" id="dateNow">----</div>
+  </div>
+  <h1>員工打卡</h1>
+
+  <div id="loginSection" style="display:flex; flex-direction:column; align-items:center; gap:14px; padding:10px 0 6px;">
+    <div id="googleBtn"></div>
+    <div style="color:var(--text-dim); font-size:13px; text-align:center;">請用Google帳號登入先打到卡</div>
+    <div class="status" id="loginStatus"></div>
+  </div>
+
+  <div id="appSection" style="display:none;">
+    <div class="user-row">
+      <div>
+        <div class="name" id="userName"></div>
+        <div class="email" id="userEmailDisplay"></div>
+      </div>
+      <button id="logoutBtn">登出</button>
+    </div>
+
+    <label>打卡類型</label>
+    <div class="types" id="typeGroup"></div>
+
+    <label for="remarkInput">備註（選填）</label>
+    <textarea id="remarkInput" placeholder="例如：交通延誤、外勤..."></textarea>
+
+    <button class="submit-btn" id="submitBtn">打卡</button>
+    <div class="status" id="statusBox"></div>
+    <div class="ip-line" id="ipLine">檢測網絡中...</div>
+  </div>
+</div>
+
+<script>
+// ====== 設定：請改成你自己新Apps Script嘅 Web App 網址 ======
+var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxxsO66PYovYoR2RNh_NM8qpv0Vm2cjExl-ta0JoMyc6DaMhZhoCF1lZMlSUfR1KrgX/exec";
+var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
+var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
+
+var currentSelectedType = null;
+var currentUserIP = null;
+var session = null; // { idToken, name, email }
+
+// ====== 時鐘 ======
+function tickClock(){
+  var now = new Date();
+  document.getElementById('timeNow').textContent = now.toLocaleTimeString('zh-HK',{hour12:false});
+  document.getElementById('dateNow').textContent = now.toLocaleDateString('zh-HK',{weekday:'long', year:'numeric', month:'long', day:'numeric'});
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ====== 打卡類型按鈕 ======
+function buildTypeButtons(){
+  var group = document.getElementById('typeGroup');
+  CHECK_TYPES.forEach(function(type){
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'type-btn';
+    btn.textContent = type;
+    btn.onclick = function(){
+      document.querySelectorAll('.type-btn').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentSelectedType = type;
+    };
+    group.appendChild(btn);
+  });
+}
+buildTypeButtons();
+
+// ====== 攞 Public IP ======
+function loadIP(){
+  fetch('https://api.ipify.org?format=json')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      currentUserIP = d.ip;
+      document.getElementById('ipLine').textContent = "目前IP: " + d.ip;
+    })
+    .catch(function(){
+      document.getElementById('ipLine').textContent = "無法檢測IP，請檢查網絡連線";
+    });
+}
+loadIP();
+
+// ====== 登入 ======
+// ====== Google 登入 ======
+window.onload = function(){
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleCredentialResponse
+  });
+  google.accounts.id.renderButton(
+    document.getElementById('googleBtn'),
+    { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with' }
+  );
+};
+
+function handleCredentialResponse(response){
+  var idToken = response.credential;
+  var statusBox = document.getElementById('loginStatus');
+  statusBox.className = 'status';
+
+  fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'login', idToken: idToken })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if (data.success){
+      session = { idToken: idToken, name: data.name, email: data.email };
+      document.getElementById('userName').textContent = data.name;
+      document.getElementById('userEmailDisplay').textContent = data.email;
+      document.getElementById('loginSection').style.display = 'none';
+      document.getElementById('appSection').style.display = 'block';
+    } else {
+      showStatus(statusBox, '✗ ' + data.message, false);
+    }
+  })
+  .catch(function(err){
+    showStatus(statusBox, '✗ 連線失敗: ' + err, false);
+  });
+}
+
+document.getElementById('logoutBtn').onclick = function(){
+  session = null;
+  currentSelectedType = null;
+  document.querySelectorAll('.type-btn').forEach(function(b){ b.classList.remove('active'); });
+  google.accounts.id.disableAutoSelect();
+  document.getElementById('appSection').style.display = 'none';
+  document.getElementById('loginSection').style.display = 'flex';
+};
+
+// ====== 打卡 ======
+document.getElementById('submitBtn').onclick = function(){
+  var statusBox = document.getElementById('statusBox');
+  var remark = document.getElementById('remarkInput').value;
+
+  if (!session){
+    showStatus(statusBox, '請先登入', false);
+    return;
+  }
+  if (!currentSelectedType){
+    showStatus(statusBox, '請揀打卡類型', false);
+    return;
+  }
+  if (!currentUserIP){
+    showStatus(statusBox, '未能檢測網絡IP，請稍後再試', false);
+    return;
+  }
+
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '處理緊...';
+
+  fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'checkin',
+      idToken: session.idToken,
+      checkType: currentSelectedType,
+      remark: remark,
+      userIP: currentUserIP
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    btn.disabled = false;
+    btn.textContent = '打卡';
+    if (data.success){
+      showStatus(statusBox, '✓ ' + data.message + '\n' + data.employee + ' · ' + data.type + ' · ' + data.time, true);
+      document.getElementById('remarkInput').value = '';
+    } else {
+      showStatus(statusBox, '✗ ' + data.message, false);
+    }
+  })
+  .catch(function(err){
+    btn.disabled = false;
+    btn.textContent = '打卡';
+    showStatus(statusBox, '✗ 連線失敗，請檢查網絡: ' + err, false);
+  });
+};
+
+function showStatus(box, msg, ok){
+  box.textContent = msg;
+  box.className = 'status show ' + (ok ? 'ok' : 'err');
+}
+
+if ('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(function(){});
+}
+</script>
+</body>
+</html>
