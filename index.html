@@ -74,6 +74,51 @@
     margin-left:auto; background:none; border:none; color:var(--text-dim);
     font-size:12px; text-decoration:underline; cursor:pointer;
   }
+  /* 豁免申請 Modal */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.75);
+    display:flex; align-items:center; justify-content:center;
+    padding:20px; z-index:100;
+  }
+  .modal-overlay.hidden{display:none;}
+  .modal{
+    background:var(--panel); border:1px solid var(--line); border-radius:20px;
+    padding:24px; width:100%; max-width:400px; max-height:90vh; overflow-y:auto;
+  }
+  .modal h2{font-size:17px; font-weight:700; margin:0 0 6px; color:var(--text);}
+  .modal p{font-size:13px; color:var(--text-dim); margin:0 0 18px; line-height:1.5;}
+  .modal-btns{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;}
+  .modal-btn-yes{
+    padding:13px; border:none; border-radius:12px;
+    background:var(--accent); color:#1b1f3b; font-size:15px; font-weight:700; cursor:pointer;
+  }
+  .modal-btn-no{
+    padding:13px; border:1px solid var(--line); border-radius:12px;
+    background:none; color:var(--text-dim); font-size:15px; cursor:pointer;
+  }
+  .photo-preview{
+    width:100%; max-height:160px; object-fit:cover;
+    border-radius:10px; margin-top:8px; display:none;
+  }
+  /* 申請紀錄 Modal */
+  .record-item{
+    background:#00000033; border:1px solid var(--line); border-radius:12px;
+    padding:12px 14px; margin-bottom:10px;
+  }
+  .record-item .rec-time{font-size:11px; color:var(--text-dim); margin-bottom:4px;}
+  .record-item .rec-reason{font-size:13px; color:var(--text); margin-bottom:6px;}
+  .record-item .rec-remark{font-size:12px; color:var(--text-dim);}
+  .badge{
+    display:inline-block; padding:3px 10px; border-radius:20px;
+    font-size:12px; font-weight:600; margin-bottom:6px;
+  }
+  .badge-pending{background:#ffb45433; color:var(--accent);}
+  .badge-approved{background:#5fd18733; color:var(--ok);}
+  .badge-rejected{background:#ff6b6b33; color:var(--err);}
+  .modal-close{
+    width:100%; margin-top:14px; padding:12px; border:1px solid var(--line);
+    border-radius:12px; background:none; color:var(--text-dim); font-size:14px; cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -108,6 +153,43 @@
     <button class="submit-btn" id="submitBtn">打卡</button>
     <div class="status" id="statusBox"></div>
     <div class="ip-line" id="ipLine">檢測網絡中...</div>
+    <button id="viewExemptionsBtn" style="
+      width:100%; margin-top:12px; padding:12px; border:1px solid var(--line);
+      border-radius:14px; background:none; color:var(--text-dim);
+      font-size:14px; cursor:pointer;">
+      📋 查看我的豁免申請
+    </button>
+  </div>
+</div>
+
+<!-- 查看申請紀錄 Modal -->
+<div class="modal-overlay hidden" id="exemptionListModal">
+  <div class="modal">
+    <h2>📋 我的豁免申請</h2>
+    <div id="exemptionListContent">
+      <div style="text-align:center; color:var(--text-dim); padding:20px;">載入緊...</div>
+    </div>
+    <button class="modal-close" id="closeExemptionListBtn">關閉</button>
+  </div>
+</div>
+<div class="modal-overlay hidden" id="exemptionModal">
+  <div class="modal">
+    <h2>⏰ 遲到豁免申請</h2>
+    <p>你嘅返工時間係遲到時段（12:46 - 14:00），需要申請豁免嗎？</p>
+    <div id="exemptionAskBtns" class="modal-btns">
+      <button class="modal-btn-yes" id="exemptionYesBtn">需要申請</button>
+      <button class="modal-btn-no" id="exemptionNoBtn">唔需要</button>
+    </div>
+    <div id="exemptionForm" style="display:none;">
+      <label>原因 <span style="color:var(--err)">*</span></label>
+      <textarea id="exemptionReason" placeholder="請填寫遲到原因..." style="min-height:80px;"></textarea>
+      <label style="margin-top:12px;">上載相片（選填）</label>
+      <input type="file" id="exemptionPhoto" accept="image/*" capture="environment"
+        style="color:var(--text-dim);font-size:13px;padding:8px 0;">
+      <img id="photoPreview" class="photo-preview">
+      <button class="modal-btn-yes" id="exemptionSubmitBtn" style="width:100%;margin-top:16px;">提交申請</button>
+      <div class="status" id="exemptionStatus"></div>
+    </div>
   </div>
 </div>
 
@@ -116,6 +198,21 @@
 var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxxsO66PYovYoR2RNh_NM8qpv0Vm2cjExl-ta0JoMyc6DaMhZhoCF1lZMlSUfR1KrgX/exec";
 var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
 var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
+// 遲到check設定
+var LATE_EMPLOYEES = ["CK", "HOSON", "MO"];
+var LATE_START = { h: 12, m: 46 };
+var LATE_END   = { h: 14, m: 0 };
+
+function isLateTime() {
+  var now = new Date();
+  var h = now.getHours(), m = now.getMinutes();
+  var totalMin = h * 60 + m;
+  return totalMin >= LATE_START.h * 60 + LATE_START.m &&
+         totalMin < LATE_END.h * 60 + LATE_END.m;
+}
+function isLateEmployee(name) {
+  return LATE_EMPLOYEES.indexOf(name) !== -1;
+}
 
 var currentSelectedType = null;
 var currentUserIP = null;
@@ -180,31 +277,51 @@ loadIP();
 // ====== 登入 ======
 // ====== Google 登入 ======
 window.onload = function(){
+  // 先check有冇記住登入狀態
+  var cachedUser = loadCachedUser();
+  if (cachedUser){
+    // 有記住 → 直接入打卡畫面，唔需要再登入
+    session = { idToken: null, name: cachedUser.name, email: cachedUser.email };
+    document.getElementById('userName').textContent = cachedUser.name;
+    document.getElementById('userEmailDisplay').textContent = cachedUser.email;
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('appSection').style.display = 'block';
+    // 背景靜默攞返新token（打卡時用），失敗都唔影響UI
+    initGoogleSilent();
+    return;
+  }
+  // 冇記住 → 顯示Google登入掣
+  initGoogleButton();
+};
+
+function initGoogleButton(){
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: handleCredentialResponse,
-    auto_select: true,           // 如果之前用過呢部機登入過，自動幫佢選返同一個account
+    auto_select: true,
     cancel_on_tap_outside: false
   });
   google.accounts.id.renderButton(
     document.getElementById('googleBtn'),
     { theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with' }
   );
+  google.accounts.id.prompt();
+}
 
-  // 如果之前登入過（本機有cache），靜默嘗試自動登入，唔使員工再撳掣
-  var cachedUser = loadCachedUser();
-  if (cachedUser){
-    document.getElementById('loginStatus').className = 'status show ok';
-    document.getElementById('loginStatus').textContent = '正在自動登入 ' + cachedUser.name + '...';
-    google.accounts.id.prompt(function(notification){
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()){
-        // 靜默登入唔到（例如token太耐冇用、瀏覽器阻止），要求手動登入一次
-        document.getElementById('loginStatus').className = 'status show err';
-        document.getElementById('loginStatus').textContent = '請重新撳掣登入一次';
-      }
+function initGoogleSilent(){
+  // 靜悄悄攞返新token，唔干擾用戶
+  try {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: function(response){
+        if (session) session.idToken = response.credential;
+      },
+      auto_select: true,
+      cancel_on_tap_outside: false
     });
-  }
-};
+    google.accounts.id.prompt(function(){});
+  } catch(e){}
+}
 
 function handleCredentialResponse(response){
   var idToken = response.credential;
@@ -262,7 +379,41 @@ document.getElementById('submitBtn').onclick = function(){
     return;
   }
 
+  // 如果有token就直接打卡，冇token就先靜默攞一個再打卡
+  if (session.idToken){
+    doCheckIn(remark);
+  } else {
+    var btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = '驗證身份中...';
+    // 靜默攞token（用戶唔會見到登入畫面）
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: function(response){
+        session.idToken = response.credential;
+        doCheckIn(remark);
+      },
+      auto_select: true
+    });
+    google.accounts.id.prompt(function(notification){
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()){
+        // 靜默攞唔到，要求手動登入一次
+        btn.disabled = false;
+        btn.textContent = '打卡';
+        clearCachedUser();
+        session = null;
+        document.getElementById('appSection').style.display = 'none';
+        document.getElementById('loginSection').style.display = 'flex';
+        initGoogleButton();
+        showStatus(document.getElementById('loginStatus'), '請重新登入一次', false);
+      }
+    });
+  }
+};
+
+function doCheckIn(remark){
   var btn = document.getElementById('submitBtn');
+  var statusBox = document.getElementById('statusBox');
   btn.disabled = true;
   btn.textContent = '處理緊...';
 
@@ -284,8 +435,14 @@ document.getElementById('submitBtn').onclick = function(){
     if (data.success){
       showStatus(statusBox, '✓ ' + data.message + '\n' + data.employee + ' · ' + data.type + ' · ' + data.time, true);
       document.getElementById('remarkInput').value = '';
+      session.idToken = null;
+      // 返工 + 遲到時段 + 指定員工 → 彈出豁免申請modal
+      if (data.type === '返工' && isLateEmployee(data.employee) && isLateTime()) {
+        setTimeout(function(){ showExemptionModal(data.time); }, 800);
+      }
     } else {
       showStatus(statusBox, '✗ ' + data.message, false);
+      session.idToken = null;
     }
   })
   .catch(function(err){
@@ -293,12 +450,177 @@ document.getElementById('submitBtn').onclick = function(){
     btn.textContent = '打卡';
     showStatus(statusBox, '✗ 連線失敗，請檢查網絡: ' + err, false);
   });
-};
+}
 
 function showStatus(box, msg, ok){
   box.textContent = msg;
   box.className = 'status show ' + (ok ? 'ok' : 'err');
 }
+
+// ====== 查看申請紀錄 ======
+document.getElementById('viewExemptionsBtn').onclick = function(){
+  var modal = document.getElementById('exemptionListModal');
+  var content = document.getElementById('exemptionListContent');
+  modal.classList.remove('hidden');
+  content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">載入緊...</div>';
+
+  // 攞token再查詢
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: function(resp){
+      fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'getMyExemptions', idToken: resp.credential })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (!data.success){
+          content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">載入失敗: ' + data.message + '</div>';
+          return;
+        }
+        if (data.records.length === 0){
+          content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">未有申請紀錄</div>';
+          return;
+        }
+        var html = '';
+        data.records.forEach(function(rec){
+          var badgeClass = rec.status === '批准' ? 'badge-approved' : rec.status === '拒絕' ? 'badge-rejected' : 'badge-pending';
+          var remarkHtml = rec.remark ? '<div class="rec-remark">備註: ' + rec.remark + '</div>' : '';
+          html += '<div class="record-item">' +
+            '<div class="rec-time">申請時間: ' + rec.applyTime + '　打卡: ' + rec.checkTime + '</div>' +
+            '<span class="badge ' + badgeClass + '">' + rec.status + '</span>' +
+            '<div class="rec-reason">' + rec.reason + '</div>' +
+            remarkHtml +
+            '</div>';
+        });
+        content.innerHTML = html;
+      })
+      .catch(function(err){
+        content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">連線失敗</div>';
+      });
+    },
+    auto_select: true
+  });
+  google.accounts.id.prompt(function(n){
+    if (n.isNotDisplayed() || n.isSkippedMoment()){
+      content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">身份驗證失敗，請重新登入</div>';
+    }
+  });
+};
+
+document.getElementById('closeExemptionListBtn').onclick = function(){
+  document.getElementById('exemptionListModal').classList.add('hidden');
+};
+
+// ====== 豁免申請 Modal ======
+var exemptionCheckTime = '';
+
+function showExemptionModal(checkTime) {
+  exemptionCheckTime = checkTime;
+  document.getElementById('exemptionModal').classList.remove('hidden');
+  document.getElementById('exemptionAskBtns').style.display = 'grid';
+  document.getElementById('exemptionForm').style.display = 'none';
+  document.getElementById('exemptionStatus').className = 'status';
+}
+
+document.getElementById('exemptionNoBtn').onclick = function(){
+  document.getElementById('exemptionModal').classList.add('hidden');
+};
+
+document.getElementById('exemptionYesBtn').onclick = function(){
+  document.getElementById('exemptionAskBtns').style.display = 'none';
+  document.getElementById('exemptionForm').style.display = 'block';
+};
+
+// 相片預覽
+document.getElementById('exemptionPhoto').onchange = function(){
+  var file = this.files[0];
+  if (!file) return;
+  var preview = document.getElementById('photoPreview');
+  var reader = new FileReader();
+  reader.onload = function(e){ preview.src = e.target.result; preview.style.display = 'block'; };
+  reader.readAsDataURL(file);
+};
+
+// 壓縮圖片 (max 800px, quality 0.6)
+function compressPhoto(file, callback) {
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var img = new Image();
+    img.onload = function(){
+      var maxW = 800, maxH = 800;
+      var w = img.width, h = img.height;
+      if (w > maxW){ h = h * maxW / w; w = maxW; }
+      if (h > maxH){ w = w * maxH / h; h = maxH; }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      callback(canvas.toDataURL('image/jpeg', 0.6), 'image/jpeg');
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('exemptionSubmitBtn').onclick = function(){
+  var reason = document.getElementById('exemptionReason').value.trim();
+  var statusBox = document.getElementById('exemptionStatus');
+  if (!reason){ showStatus(statusBox, '請填寫遲到原因', false); return; }
+
+  var btn = document.getElementById('exemptionSubmitBtn');
+  btn.disabled = true; btn.textContent = '提交緊...';
+
+  var photoFile = document.getElementById('exemptionPhoto').files[0];
+
+  function submitExemption(photoBase64, photoMime) {
+    // 攞新token再提交
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: function(resp){
+        fetch(SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'applyExemption',
+            idToken: resp.credential,
+            reason: reason,
+            photoBase64: photoBase64 || '',
+            photoMimeType: photoMime || '',
+            checkTime: exemptionCheckTime
+          })
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          btn.disabled = false; btn.textContent = '提交申請';
+          if (data.success){
+            showStatus(statusBox, '✓ ' + data.message, true);
+            setTimeout(function(){ document.getElementById('exemptionModal').classList.add('hidden'); }, 2000);
+          } else {
+            showStatus(statusBox, '✗ ' + data.message, false);
+          }
+        })
+        .catch(function(err){
+          btn.disabled = false; btn.textContent = '提交申請';
+          showStatus(statusBox, '✗ 連線失敗: ' + err, false);
+        });
+      },
+      auto_select: true
+    });
+    google.accounts.id.prompt(function(n){
+      if (n.isNotDisplayed() || n.isSkippedMoment()){
+        btn.disabled = false; btn.textContent = '提交申請';
+        showStatus(statusBox, '✗ 身份驗證失敗，請重新登入', false);
+      }
+    });
+  }
+
+  if (photoFile){
+    compressPhoto(photoFile, function(base64, mime){ submitExemption(base64, mime); });
+  } else {
+    submitExemption('', '');
+  }
+};
 
 if ('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(function(){});
