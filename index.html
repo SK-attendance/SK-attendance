@@ -512,11 +512,8 @@ function showGreeting(checkType, employeeName) {
   var isBefore1pm = now.getHours() < 13;
 
   if (checkType === '返工') {
-    if (isBefore1pm) {
-      emoji = '☀️'; msg = '早晨，' + employeeName + '！';
-    } else {
-      emoji = '🌤️'; msg = '午安~~ ' + employeeName + '！';
-    }
+    if (isBefore1pm) { emoji = '☀️'; msg = '早晨，' + employeeName + '！'; }
+    else              { emoji = '🌤️'; msg = '午安~~ ' + employeeName + '！'; }
   } else if (checkType === '放break') {
     emoji = '🍚'; msg = '夠鐘食飯~~~';
   } else if (checkType === '完break') {
@@ -525,7 +522,13 @@ function showGreeting(checkType, employeeName) {
     emoji = '🎉'; msg = '放工大吉！辛苦晒！';
   }
 
-  if (emoji || msg) showToast(emoji, msg, '', false);
+  var isBirthday = session && checkBirthdayToday(session.birthday);
+  if (isBirthday) {
+    // 生日文字喺上，普通greeting喺下，合成一個toast
+    showToast('🎂✨', 'Happy Birthday! ' + employeeName + '，生日快樂！🥳', msg, true);
+  } else {
+    if (emoji || msg) showToast(emoji, msg, '', false);
+  }
 }
 
 function showToast(emoji, msg, sub, isBirthday) {
