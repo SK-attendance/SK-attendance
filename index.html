@@ -482,11 +482,7 @@ function doCheckIn(remark){
       document.getElementById('remarkInput').value = '';
       session.idToken = null;
       // 顯示Greeting Toast
-      if (data.isBirthday) {
-    showToast('🎂✨', 'Happy Birthday! ' + data.employee + '，生日快樂！🥳', '', true);
-} else {
-    showGreeting(data.type, data.employee);
-}
+      showGreeting(data.type, data.employee);
       // 返工 + 遲到時段 + 指定員工 → 彈出豁免申請modal
       if (data.type === '返工' && isLateEmployee(data.employee) && isLateTime()) {
         setTimeout(function(){ showExemptionModal(data.time); }, 800);
