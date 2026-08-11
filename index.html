@@ -524,8 +524,9 @@ function showGreeting(checkType, employeeName) {
 
   var isBirthday = session && checkBirthdayToday(session.birthday);
   if (isBirthday) {
-    // 生日文字喺上，普通greeting喺下，合成一個toast
-    showToast('🎂✨', 'Happy Birthday! ' + employeeName + '，生日快樂！🥳', msg, true);
+    // 所有打卡類型生日當日都顯示，普通greeting(如有)放下面
+    var sub = (emoji || msg) ? emoji + ' ' + msg : '';
+    showToast('🎂✨', 'Happy Birthday! ' + employeeName + '，生日快樂！🥳', sub, true);
   } else {
     if (emoji || msg) showToast(emoji, msg, '', false);
   }
