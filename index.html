@@ -119,6 +119,23 @@
     width:100%; margin-top:14px; padding:12px; border:1px solid var(--line);
     border-radius:12px; background:none; color:var(--text-dim); font-size:14px; cursor:pointer;
   }
+  /* Greeting Toast */
+  .toast{
+    position:fixed; bottom:40px; left:50%; transform:translateX(-50%) translateY(120px);
+    background:var(--panel); border:1px solid var(--line); border-radius:20px;
+    padding:18px 28px; text-align:center; z-index:200;
+    box-shadow:0 20px 50px -10px rgba(0,0,0,0.7);
+    transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.4s ease;
+    opacity:0; min-width:260px; max-width:320px;
+  }
+  .toast.show{transform:translateX(-50%) translateY(0); opacity:1;}
+  .toast.hide{transform:translateX(-50%) translateY(120px); opacity:0;}
+  .toast .toast-emoji{font-size:44px; display:block; margin-bottom:8px;}
+  .toast .toast-msg{font-size:18px; font-weight:700; color:var(--text);}
+  .toast .toast-sub{font-size:13px; color:var(--text-dim); margin-top:4px;}
+  /* Birthday special */
+  .toast.birthday{border-color:#ffb454; background:linear-gradient(135deg,#1b1f3b,#2a1f3b);}
+  .toast.birthday .toast-msg{color:var(--accent);}
 </style>
 </head>
 <body>
@@ -162,6 +179,13 @@
   </div>
 </div>
 
+<!-- Greeting Toast -->
+<div class="toast" id="greetingToast">
+  <span class="toast-emoji" id="toastEmoji"></span>
+  <div class="toast-msg" id="toastMsg"></div>
+  <div class="toast-sub" id="toastSub"></div>
+</div>
+
 <!-- 查看申請紀錄 Modal -->
 <div class="modal-overlay hidden" id="exemptionListModal">
   <div class="modal">
@@ -195,7 +219,7 @@
 
 <script>
 // ====== 設定：請改成你自己新Apps Script嘅 Web App 網址 ======
-var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz9u_mJbsgAPr9vd-xrCzrAIW8kj04QD1oKbpVQldkeflIqLGe7coFzmtGZOIlFHK-8/exec";
+var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxxsO66PYovYoR2RNh_NM8qpv0Vm2cjExl-ta0JoMyc6DaMhZhoCF1lZMlSUfR1KrgX/exec";
 var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
 var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
 // 遲到check設定
@@ -220,7 +244,9 @@ var session = null; // { idToken, name, email }
 
 function saveSession(){
   try {
-    localStorage.setItem('sk_checkin_user', JSON.stringify({ name: session.name, email: session.email }));
+    localStorage.setItem('sk_checkin_user', JSON.stringify({
+      name: session.name, email: session.email, birthday: session.birthday || ""
+    }));
   } catch(e){}
 }
 function loadCachedUser(){
@@ -231,6 +257,17 @@ function loadCachedUser(){
 }
 function clearCachedUser(){
   try { localStorage.removeItem('sk_checkin_user'); } catch(e){}
+}
+
+// 判斷今日係咪生日（MM-DD格式）
+function checkBirthdayToday(birthdayStr) {
+  if (!birthdayStr) return false;
+  var today = new Date();
+  var mm = String(today.getMonth() + 1).padStart(2, '0');
+  var dd = String(today.getDate()).padStart(2, '0');
+  var todayMMDD = mm + '-' + dd;
+  var normalized = birthdayStr.replace(/\//g, '-').substring(0, 5);
+  return normalized === todayMMDD;
 }
 
 // ====== 時鐘 ======
@@ -281,11 +318,15 @@ window.onload = function(){
   var cachedUser = loadCachedUser();
   if (cachedUser){
     // 有記住 → 直接入打卡畫面，唔需要再登入
-    session = { idToken: null, name: cachedUser.name, email: cachedUser.email };
+    session = { idToken: null, name: cachedUser.name, email: cachedUser.email, birthday: cachedUser.birthday || "" };
     document.getElementById('userName').textContent = cachedUser.name;
     document.getElementById('userEmailDisplay').textContent = cachedUser.email;
     document.getElementById('loginSection').style.display = 'none';
     document.getElementById('appSection').style.display = 'block';
+    // 生日check（開App就顯示）
+    if (checkBirthdayToday(cachedUser.birthday)) {
+      setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', cachedUser.name + '，生日快樂！🥳', true); }, 600);
+    }
     // 背景靜默攞返新token（打卡時用），失敗都唔影響UI
     initGoogleSilent();
     return;
@@ -336,12 +377,16 @@ function handleCredentialResponse(response){
   .then(function(r){ return r.json(); })
   .then(function(data){
     if (data.success){
-      session = { idToken: idToken, name: data.name, email: data.email };
+      session = { idToken: idToken, name: data.name, email: data.email, birthday: data.birthday || "" };
       saveSession();
       document.getElementById('userName').textContent = data.name;
       document.getElementById('userEmailDisplay').textContent = data.email;
       document.getElementById('loginSection').style.display = 'none';
       document.getElementById('appSection').style.display = 'block';
+      // 生日check（登入就顯示）
+      if (data.isBirthday) {
+        setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', data.name + '，生日快樂！🥳', true); }, 600);
+      }
     } else {
       showStatus(statusBox, '✗ ' + data.message, false);
     }
@@ -436,6 +481,8 @@ function doCheckIn(remark){
       showStatus(statusBox, '✓ ' + data.message + '\n' + data.employee + ' · ' + data.type + ' · ' + data.time, true);
       document.getElementById('remarkInput').value = '';
       session.idToken = null;
+      // 顯示Greeting Toast
+      showGreeting(data.type, data.employee);
       // 返工 + 遲到時段 + 指定員工 → 彈出豁免申請modal
       if (data.type === '返工' && isLateEmployee(data.employee) && isLateTime()) {
         setTimeout(function(){ showExemptionModal(data.time); }, 800);
@@ -455,6 +502,47 @@ function doCheckIn(remark){
 function showStatus(box, msg, ok){
   box.textContent = msg;
   box.className = 'status show ' + (ok ? 'ok' : 'err');
+}
+
+// ====== Greeting Toast ======
+var toastTimer = null;
+function showGreeting(checkType, employeeName) {
+  var emoji = '', msg = '';
+  var now = new Date();
+  var isBefore1pm = now.getHours() < 13;
+
+  if (checkType === '返工') {
+    if (isBefore1pm) {
+      emoji = '☀️'; msg = '早晨，' + employeeName + '！';
+    } else {
+      emoji = '🌤️'; msg = '午安~~ ' + employeeName + '！';
+    }
+  } else if (checkType === '放break') {
+    emoji = '🍚'; msg = '夠鐘食飯~~~';
+  } else if (checkType === '完break') {
+    emoji = '😋'; msg = '';
+  } else if (checkType === '放工') {
+    emoji = '🎉'; msg = '放工大吉！辛苦晒！';
+  }
+
+  if (emoji || msg) showToast(emoji, msg, '', false);
+}
+
+function showToast(emoji, msg, sub, isBirthday) {
+  var toast = document.getElementById('greetingToast');
+  document.getElementById('toastEmoji').textContent = emoji;
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastSub').textContent = sub || '';
+  toast.className = 'toast' + (isBirthday ? ' birthday' : '');
+  // 強制reflow先加show
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){
+    toast.classList.remove('show');
+    toast.classList.add('hide');
+    setTimeout(function(){ toast.classList.remove('hide'); }, 400);
+  }, 3000);
 }
 
 // ====== 查看申請紀錄 ======
