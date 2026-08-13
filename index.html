@@ -219,7 +219,7 @@
 
 <script>
 // ====== 設定：請改成你自己新Apps Script嘅 Web App 網址 ======
-var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbztEyFk8PE5MizVnPzJURFvJun0x5V7ozrkEvkrvMqtlxUgOJWnyWINry0l8axmvYry/exec";
+var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzp73uFM6idbXIBPLScekC8MK40XS3FWV4QnjmpeKJNJZRHE9JJzpFixHW3A6c9Olp-/exec";
 var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
 var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
 // 遲到check設定
@@ -240,7 +240,20 @@ function isLateEmployee(name) {
 
 var currentSelectedType = null;
 var currentUserIP = null;
-var session = null; // { idToken, name, email }
+var session = null;
+// Token緩存：攞到token之後記住55分鐘，唔使每次打卡都重新攞
+var tokenCache = { token: null, expiry: 0 };
+
+function setCachedToken(token) {
+  tokenCache.token = token;
+  tokenCache.expiry = Date.now() + 55 * 60 * 1000; // 55分鐘
+}
+function getValidToken() {
+  if (tokenCache.token && Date.now() < tokenCache.expiry) {
+    return tokenCache.token;
+  }
+  return null;
+}
 
 function saveSession(){
   try {
@@ -366,6 +379,7 @@ function initGoogleSilent(){
 
 function handleCredentialResponse(response){
   var idToken = response.credential;
+  setCachedToken(idToken); // 緩存token
   var statusBox = document.getElementById('loginStatus');
   statusBox.className = 'status';
 
@@ -424,17 +438,22 @@ document.getElementById('submitBtn').onclick = function(){
     return;
   }
 
-  // 如果有token就直接打卡，冇token就先靜默攞一個再打卡
-  if (session.idToken){
+  // 優先用緩存token（55分鐘內有效），冇緩存先嘗試靜默攞新token
+  var cachedTok = getValidToken();
+  if (cachedTok) {
+    session.idToken = cachedTok;
+    doCheckIn(remark);
+  } else if (session.idToken) {
+    setCachedToken(session.idToken);
     doCheckIn(remark);
   } else {
     var btn = document.getElementById('submitBtn');
     btn.disabled = true;
     btn.textContent = '驗證身份中...';
-    // 靜默攞token（用戶唔會見到登入畫面）
     google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: function(response){
+        setCachedToken(response.credential);
         session.idToken = response.credential;
         doCheckIn(remark);
       },
@@ -442,7 +461,6 @@ document.getElementById('submitBtn').onclick = function(){
     });
     google.accounts.id.prompt(function(notification){
       if (notification.isNotDisplayed() || notification.isSkippedMoment()){
-        // 靜默攞唔到，要求手動登入一次
         btn.disabled = false;
         btn.textContent = '打卡';
         clearCachedUser();
@@ -556,48 +574,41 @@ document.getElementById('viewExemptionsBtn').onclick = function(){
   modal.classList.remove('hidden');
   content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">載入緊...</div>';
 
-  // 攞token再查詢
-  google.accounts.id.initialize({
-    client_id: GOOGLE_CLIENT_ID,
-    callback: function(resp){
-      fetch(SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'getMyExemptions', idToken: resp.credential })
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        if (!data.success){
-          content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">載入失敗: ' + data.message + '</div>';
-          return;
-        }
-        if (data.records.length === 0){
-          content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">未有申請紀錄</div>';
-          return;
-        }
-        var html = '';
-        data.records.forEach(function(rec){
-          var badgeClass = rec.status === '批准' ? 'badge-approved' : rec.status === '拒絕' ? 'badge-rejected' : 'badge-pending';
-          var remarkHtml = rec.remark ? '<div class="rec-remark">備註: ' + rec.remark + '</div>' : '';
-          html += '<div class="record-item">' +
-            '<div class="rec-time">申請時間: ' + rec.applyTime + '　打卡: ' + rec.checkTime + '</div>' +
-            '<span class="badge ' + badgeClass + '">' + rec.status + '</span>' +
-            '<div class="rec-reason">' + rec.reason + '</div>' +
-            remarkHtml +
-            '</div>';
-        });
-        content.innerHTML = html;
-      })
-      .catch(function(err){
-        content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">連線失敗</div>';
-      });
-    },
-    auto_select: true
-  });
-  google.accounts.id.prompt(function(n){
-    if (n.isNotDisplayed() || n.isSkippedMoment()){
-      content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">身份驗證失敗，請重新登入</div>';
+  var tok = getValidToken();
+  if (!tok) {
+    content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">登入已過期，請重新登入</div>';
+    return;
+  }
+  fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'getMyExemptions', idToken: tok })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if (!data.success){
+      content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">載入失敗: ' + data.message + '</div>';
+      return;
     }
+    if (data.records.length === 0){
+      content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">未有申請紀錄</div>';
+      return;
+    }
+    var html = '';
+    data.records.forEach(function(rec){
+      var badgeClass = rec.status === '批准' ? 'badge-approved' : rec.status === '拒絕' ? 'badge-rejected' : 'badge-pending';
+      var remarkHtml = rec.remark ? '<div class="rec-remark">備註: ' + rec.remark + '</div>' : '';
+      html += '<div class="record-item">' +
+        '<div class="rec-time">申請時間: ' + rec.applyTime + '　打卡: ' + rec.checkTime + '</div>' +
+        '<span class="badge ' + badgeClass + '">' + rec.status + '</span>' +
+        '<div class="rec-reason">' + rec.reason + '</div>' +
+        remarkHtml +
+        '</div>';
+    });
+    content.innerHTML = html;
+  })
+  .catch(function(err){
+    content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">連線失敗，請稍後再試</div>';
   });
 };
 
@@ -666,44 +677,37 @@ document.getElementById('exemptionSubmitBtn').onclick = function(){
   var photoFile = document.getElementById('exemptionPhoto').files[0];
 
   function submitExemption(photoBase64, photoMime) {
-    // 攞新token再提交
-    google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: function(resp){
-        fetch(SCRIPT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action: 'applyExemption',
-            idToken: resp.credential,
-            reason: reason,
-            photoBase64: photoBase64 || '',
-            photoMimeType: photoMime || '',
-            checkTime: exemptionCheckTime
-          })
-        })
-        .then(function(r){ return r.json(); })
-        .then(function(data){
-          btn.disabled = false; btn.textContent = '提交申請';
-          if (data.success){
-            showStatus(statusBox, '✓ ' + data.message, true);
-            setTimeout(function(){ document.getElementById('exemptionModal').classList.add('hidden'); }, 2000);
-          } else {
-            showStatus(statusBox, '✗ ' + data.message, false);
-          }
-        })
-        .catch(function(err){
-          btn.disabled = false; btn.textContent = '提交申請';
-          showStatus(statusBox, '✗ 連線失敗: ' + err, false);
-        });
-      },
-      auto_select: true
-    });
-    google.accounts.id.prompt(function(n){
-      if (n.isNotDisplayed() || n.isSkippedMoment()){
-        btn.disabled = false; btn.textContent = '提交申請';
-        showStatus(statusBox, '✗ 身份驗證失敗，請重新登入', false);
+    var tok = getValidToken();
+    if (!tok) {
+      btn.disabled = false; btn.textContent = '提交申請';
+      showStatus(statusBox, '✗ 登入已過期，請重新登入', false);
+      return;
+    }
+    fetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'applyExemption',
+        idToken: tok,
+        reason: reason,
+        photoBase64: photoBase64 || '',
+        photoMimeType: photoMime || '',
+        checkTime: exemptionCheckTime
+      })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      btn.disabled = false; btn.textContent = '提交申請';
+      if (data.success){
+        showStatus(statusBox, '✓ ' + data.message, true);
+        setTimeout(function(){ document.getElementById('exemptionModal').classList.add('hidden'); }, 2000);
+      } else {
+        showStatus(statusBox, '✗ ' + data.message, false);
       }
+    })
+    .catch(function(err){
+      btn.disabled = false; btn.textContent = '提交申請';
+      showStatus(statusBox, '✗ 連線失敗: ' + err, false);
     });
   }
 
