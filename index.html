@@ -115,6 +115,34 @@
   .badge-pending{background:#ffb45433; color:var(--accent);}
   .badge-approved{background:#5fd18733; color:var(--ok);}
   .badge-rejected{background:#ff6b6b33; color:var(--err);}
+  /* 打卡紀錄 Modal */
+  .month-tabs{
+    display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;
+  }
+  .month-tab{
+    padding:6px 14px; border-radius:20px; font-size:13px; cursor:pointer;
+    border:1px solid var(--line); background:none; color:var(--text-dim);
+    transition:all .15s;
+  }
+  .month-tab.active{
+    background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600;
+  }
+  .rec-card{
+    background:#00000033; border:1px solid var(--line); border-radius:12px;
+    padding:11px 14px; margin-bottom:8px; display:flex; align-items:center; gap:12px;
+  }
+  .rec-card .rec-date-col{ min-width:68px; }
+  .rec-card .rec-d{ font-size:13px; color:var(--text); font-weight:600; }
+  .rec-card .rec-t{ font-size:11px; color:var(--text-dim); margin-top:2px; }
+  .rec-card .rec-type{
+    font-size:13px; font-weight:600; padding:4px 12px;
+    border-radius:20px; white-space:nowrap;
+  }
+  .type-返工 { background:#5fd18722; color:var(--ok); }
+  .type-放工 { background:#ffb45422; color:var(--accent); }
+  .type-放break { background:#9a9bbf22; color:var(--text-dim); }
+  .type-完break { background:#9a9bbf22; color:var(--text-dim); }
+  .rec-card .rec-rmk{ font-size:11px; color:var(--text-dim); margin-top:2px; }
   .modal-close{
     width:100%; margin-top:14px; padding:12px; border:1px solid var(--line);
     border-radius:12px; background:none; color:var(--text-dim); font-size:14px; cursor:pointer;
@@ -176,6 +204,12 @@
       font-size:14px; cursor:pointer;">
       📋 查看我的豁免申請
     </button>
+    <button id="viewRecordsBtn" style="
+      width:100%; margin-top:10px; padding:12px; border:1px solid var(--line);
+      border-radius:14px; background:none; color:var(--text-dim);
+      font-size:14px; cursor:pointer;">
+      📅 我的打卡紀錄
+    </button>
   </div>
 </div>
 
@@ -184,6 +218,18 @@
   <span class="toast-emoji" id="toastEmoji"></span>
   <div class="toast-msg" id="toastMsg"></div>
   <div class="toast-sub" id="toastSub"></div>
+</div>
+
+<!-- 我的打卡紀錄 Modal -->
+<div class="modal-overlay hidden" id="recordsModal">
+  <div class="modal" style="max-height:85vh;">
+    <h2>📅 我的打卡紀錄</h2>
+    <div class="month-tabs" id="monthTabs"></div>
+    <div id="recordsContent">
+      <div style="text-align:center;color:var(--text-dim);padding:20px;">載入緊...</div>
+    </div>
+    <button class="modal-close" id="closeRecordsBtn">關閉</button>
+  </div>
 </div>
 
 <!-- 查看申請紀錄 Modal -->
@@ -219,7 +265,7 @@
 
 <script>
 // ====== 設定：請改成你自己新Apps Script嘅 Web App 網址 ======
-var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzp73uFM6idbXIBPLScekC8MK40XS3FWV4QnjmpeKJNJZRHE9JJzpFixHW3A6c9Olp-/exec";
+var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxBEfFAliwlL3X4QR4qrl4lPi7WrpgsxAVqob9HaupaCMbPIEGYQXJADNkb62sJuTq8/exec";
 var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
 var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
 // 遲到check設定
@@ -566,6 +612,109 @@ function showToast(emoji, msg, sub, isBirthday) {
     setTimeout(function(){ toast.classList.remove('hide'); }, 400);
   }, 3000);
 }
+
+// ====== 我的打卡紀錄 ======
+var allRecords = [];
+
+document.getElementById('viewRecordsBtn').onclick = function(){
+  var modal = document.getElementById('recordsModal');
+  var content = document.getElementById('recordsContent');
+  var tabs = document.getElementById('monthTabs');
+  modal.classList.remove('hidden');
+  content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">載入緊...</div>';
+  tabs.innerHTML = '';
+
+  var tok = getValidToken();
+  if (!tok) {
+    content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">登入已過期，請重新登入</div>';
+    return;
+  }
+
+  fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'getMyRecords', idToken: tok })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    if (!data.success){
+      content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">載入失敗: ' + data.message + '</div>';
+      return;
+    }
+    if (!data.records || data.records.length === 0){
+      content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">未有打卡紀錄</div>';
+      return;
+    }
+    allRecords = data.records;
+
+    // 建立月份tab
+    data.months.forEach(function(ym, i){
+      var parts = ym.split('-');
+      var label = parts[0] + '年' + parseInt(parts[1]) + '月';
+      var btn = document.createElement('button');
+      btn.className = 'month-tab' + (i === 0 ? ' active' : '');
+      btn.textContent = label;
+      btn.dataset.ym = ym;
+      btn.onclick = function(){
+        document.querySelectorAll('.month-tab').forEach(function(b){ b.classList.remove('active'); });
+        btn.classList.add('active');
+        renderRecords(ym);
+      };
+      tabs.appendChild(btn);
+    });
+
+    // 顯示最新月份
+    if (data.months.length > 0) renderRecords(data.months[0]);
+  })
+  .catch(function(){
+    content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">連線失敗，請稍後再試</div>';
+  });
+};
+
+function renderRecords(yearMonth) {
+  var content = document.getElementById('recordsContent');
+  var filtered = allRecords.filter(function(r){ return r.date && r.date.substring(0,7) === yearMonth; });
+
+  if (filtered.length === 0){
+    content.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px;">呢個月未有紀錄</div>';
+    return;
+  }
+
+  // 按日期分組
+  var byDate = {};
+  filtered.forEach(function(r){
+    if (!byDate[r.date]) byDate[r.date] = [];
+    byDate[r.date].push(r);
+  });
+
+  var html = '';
+  Object.keys(byDate).sort().reverse().forEach(function(date){
+    var dayRecs = byDate[date];
+    // 日期標題
+    var d = new Date(date + 'T00:00:00');
+    var weekdays = ['日','一','二','三','四','五','六'];
+    var dateLabel = date.substring(5).replace('-', '/') + ' (星期' + weekdays[d.getDay()] + ')';
+    html += '<div style="font-size:12px;color:var(--text-dim);margin:10px 0 6px;padding-left:2px;">' + dateLabel + '</div>';
+    dayRecs.forEach(function(r){
+      var typeClass = 'type-' + r.type;
+      var rmkHtml = r.remark ? '<div class="rec-rmk">📝 ' + r.remark + '</div>' : '';
+      html += '<div class="rec-card">' +
+        '<div class="rec-date-col">' +
+          '<div class="rec-d">' + (r.time || '') + '</div>' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<span class="rec-type ' + typeClass + '">' + r.type + '</span>' +
+          rmkHtml +
+        '</div>' +
+      '</div>';
+    });
+  });
+  content.innerHTML = html;
+}
+
+document.getElementById('closeRecordsBtn').onclick = function(){
+  document.getElementById('recordsModal').classList.add('hidden');
+};
 
 // ====== 查看申請紀錄 ======
 document.getElementById('viewExemptionsBtn').onclick = function(){
