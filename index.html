@@ -265,7 +265,7 @@
 
 <script>
 // ====== 設定：請改成你自己新Apps Script嘅 Web App 網址 ======
-var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkcVrlqjP9dt3X5VZbCP102be1Zw_BVgD6k9G1Ac3n5K3-AR37GZ7YoMsfO4cpJHzy/exec";
+var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwz3eg6TG_wXjQdJMPiTOCspyRRCr0Om3Bpl3nNwjHyxhqCcIrUNSQUF9_AHR5ZNObm/exec";
 var GOOGLE_CLIENT_ID = "564783152398-5dkc0roiqrgh89308u02fhmgdch8pk41.apps.googleusercontent.com";
 var CHECK_TYPES = ["返工", "放工", "放break", "完break"];
 // 遲到check設定
@@ -329,7 +329,27 @@ function checkBirthdayToday(birthdayStr) {
   return normalized === todayMMDD;
 }
 
-// ====== 時鐘 ======
+// ====== 穩健Fetch（失敗自動重試最多3次）======
+function robustFetch(url, options, retries) {
+  retries = retries === undefined ? 3 : retries;
+  return fetch(url, Object.assign({ redirect: 'follow', credentials: 'omit' }, options))
+    .then(function(r) {
+      if (!r.ok && retries > 0) {
+        return new Promise(function(resolve) {
+          setTimeout(function() { resolve(robustFetch(url, options, retries - 1)); }, 1000);
+        });
+      }
+      return r;
+    })
+    .catch(function(err) {
+      if (retries > 0) {
+        return new Promise(function(resolve) {
+          setTimeout(function() { resolve(robustFetch(url, options, retries - 1)); }, 1200);
+        });
+      }
+      throw err;
+    });
+}
 function tickClock(){
   var now = new Date();
   document.getElementById('timeNow').textContent = now.toLocaleTimeString('zh-HK',{hour12:false});
@@ -429,7 +449,7 @@ function handleCredentialResponse(response){
   var statusBox = document.getElementById('loginStatus');
   statusBox.className = 'status';
 
-  fetch(SCRIPT_URL, {
+  robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'login', idToken: idToken })
@@ -452,7 +472,21 @@ function handleCredentialResponse(response){
     }
   })
   .catch(function(err){
-    showStatus(statusBox, '✗ 連線失敗: ' + err, false);
+    showStatus(statusBox, '✗ 連線失敗，請重試', false);
+    // 顯示重試掣，唔使再撳Google登入
+    var existingBtn = document.getElementById('retryLoginBtn');
+    if (!existingBtn) {
+      var retryBtn = document.createElement('button');
+      retryBtn.id = 'retryLoginBtn';
+      retryBtn.textContent = '🔄 重試';
+      retryBtn.style.cssText = 'width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:none;color:var(--text-dim);font-size:14px;cursor:pointer;';
+      retryBtn.onclick = function(){
+        statusBox.className = 'status';
+        this.remove();
+        handleCredentialResponse({ credential: idToken });
+      };
+      statusBox.parentNode.insertBefore(retryBtn, statusBox.nextSibling);
+    }
   });
 }
 
@@ -526,7 +560,7 @@ function doCheckIn(remark){
   btn.disabled = true;
   btn.textContent = '處理緊...';
 
-  fetch(SCRIPT_URL, {
+  robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
@@ -630,7 +664,7 @@ document.getElementById('viewRecordsBtn').onclick = function(){
     return;
   }
 
-  fetch(SCRIPT_URL, {
+  robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'getMyRecords', idToken: tok })
@@ -728,7 +762,7 @@ document.getElementById('viewExemptionsBtn').onclick = function(){
     content.innerHTML = '<div style="color:var(--err);text-align:center;padding:20px;">登入已過期，請重新登入</div>';
     return;
   }
-  fetch(SCRIPT_URL, {
+  robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'getMyExemptions', idToken: tok })
@@ -832,7 +866,7 @@ document.getElementById('exemptionSubmitBtn').onclick = function(){
       showStatus(statusBox, '✗ 登入已過期，請重新登入', false);
       return;
     }
-    fetch(SCRIPT_URL, {
+    robustFetch(SCRIPT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
