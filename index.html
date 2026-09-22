@@ -560,6 +560,17 @@ function doCheckIn(remark){
   btn.disabled = true;
   btn.textContent = '處理緊...';
 
+  // 15秒超時保護：response返唔到都唔會卡住
+  var didRespond = false;
+  var timeoutId = setTimeout(function(){
+    if (!didRespond){
+      didRespond = true;
+      btn.disabled = false;
+      btn.textContent = '打卡';
+      showStatus(statusBox, '⚠️ 網絡較慢，打卡已送出\n請查看「我的打卡紀錄」確認是否成功', true);
+    }
+  }, 15000);
+
   robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -571,17 +582,24 @@ function doCheckIn(remark){
       userIP: currentUserIP
     })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(data){
+  .then(function(r){ return r.text(); })
+  .then(function(text){
+    if (didRespond) return;
+    didRespond = true;
+    clearTimeout(timeoutId);
+    var data;
+    try { data = JSON.parse(text); } catch(e) {
+      btn.disabled = false; btn.textContent = '打卡';
+      showStatus(statusBox, '⚠️ 打卡已送出，請查看「我的打卡紀錄」確認', true);
+      return;
+    }
     btn.disabled = false;
     btn.textContent = '打卡';
     if (data.success){
       showStatus(statusBox, '✓ ' + data.message + '\n' + data.employee + ' · ' + data.type + ' · ' + data.time, true);
       document.getElementById('remarkInput').value = '';
       session.idToken = null;
-      // 顯示Greeting Toast
       showGreeting(data.type, data.employee);
-      // 返工 + 遲到時段 + 指定員工 → 彈出豁免申請modal
       if (data.type === '返工' && isLateEmployee(data.employee) && isLateTime()) {
         setTimeout(function(){ showExemptionModal(data.time); }, 800);
       }
@@ -591,9 +609,12 @@ function doCheckIn(remark){
     }
   })
   .catch(function(err){
+    if (didRespond) return;
+    didRespond = true;
+    clearTimeout(timeoutId);
     btn.disabled = false;
     btn.textContent = '打卡';
-    showStatus(statusBox, '✗ 連線失敗，請檢查網絡: ' + err, false);
+    showStatus(statusBox, '⚠️ 網絡較慢，打卡已送出\n請查看「我的打卡紀錄」確認是否成功', true);
   });
 }
 
