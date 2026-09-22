@@ -292,13 +292,29 @@ var tokenCache = { token: null, expiry: 0 };
 
 function setCachedToken(token) {
   tokenCache.token = token;
-  tokenCache.expiry = Date.now() + 55 * 60 * 1000; // 55分鐘
+  tokenCache.expiry = Date.now() + 55 * 60 * 1000;
+  // 同時存入localStorage，關App重開都有效
+  try { localStorage.setItem('sk_token', JSON.stringify({ t: token, e: tokenCache.expiry })); } catch(e){}
 }
 function getValidToken() {
-  if (tokenCache.token && Date.now() < tokenCache.expiry) {
-    return tokenCache.token;
-  }
+  if (tokenCache.token && Date.now() < tokenCache.expiry) return tokenCache.token;
+  // 記憶體冇，試localStorage
+  try {
+    var raw = localStorage.getItem('sk_token');
+    if (raw) {
+      var obj = JSON.parse(raw);
+      if (obj && obj.t && Date.now() < obj.e) {
+        tokenCache.token = obj.t;
+        tokenCache.expiry = obj.e;
+        return obj.t;
+      }
+    }
+  } catch(e){}
   return null;
+}
+function clearCachedToken() {
+  tokenCache.token = null; tokenCache.expiry = 0;
+  try { localStorage.removeItem('sk_token'); } catch(e){}
 }
 
 function saveSession(){
@@ -393,24 +409,20 @@ loadIP();
 // ====== 登入 ======
 // ====== Google 登入 ======
 window.onload = function(){
-  // 先check有冇記住登入狀態
   var cachedUser = loadCachedUser();
   if (cachedUser){
-    // 有記住 → 直接入打卡畫面，唔需要再登入
+    // 有記住 → 直接入打卡畫面
     session = { idToken: null, name: cachedUser.name, email: cachedUser.email, birthday: cachedUser.birthday || "" };
     document.getElementById('userName').textContent = cachedUser.name;
     document.getElementById('userEmailDisplay').textContent = cachedUser.email;
     document.getElementById('loginSection').style.display = 'none';
     document.getElementById('appSection').style.display = 'block';
-    // 生日check（開App就顯示）
     if (checkBirthdayToday(cachedUser.birthday)) {
       setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', cachedUser.name + '，生日快樂！🥳', true); }, 600);
     }
-    // 背景靜默攞返新token（打卡時用），失敗都唔影響UI
-    initGoogleSilent();
+    // token從localStorage自動恢復（getValidToken()會攞到），唔需要再call Google
     return;
   }
-  // 冇記住 → 顯示Google登入掣
   initGoogleButton();
 };
 
@@ -443,47 +455,40 @@ function initGoogleSilent(){
   } catch(e){}
 }
 
-function decodeJwt(token){
-  try {
-    var payload = token.split('.')[1];
-    return JSON.parse(decodeURIComponent(escape(atob(payload.replace(/-/g,'+').replace(/_/g,'/')))));
-  } catch(e){ return null; }
-}
-
 function handleCredentialResponse(response){
   var idToken = response.credential;
   setCachedToken(idToken);
   var statusBox = document.getElementById('loginStatus');
   statusBox.className = 'status';
 
-  // 解碼token攞email，唔使等後台
+  // 即刻解碼Google token（Google已驗證，可信）
   var payload = decodeJwt(idToken);
-  var tokenEmail = payload ? (payload.email || '') : '';
-  var cachedUser = loadCachedUser();
-
-  // 如果係返回用戶（email match），即刻顯示打卡畫面，後台靜默驗證
-  if (cachedUser && tokenEmail && tokenEmail.toLowerCase() === cachedUser.email.toLowerCase()) {
-    session = { idToken: idToken, name: cachedUser.name, email: cachedUser.email, birthday: cachedUser.birthday || "" };
-    document.getElementById('userName').textContent = cachedUser.name;
-    document.getElementById('userEmailDisplay').textContent = cachedUser.email;
-    document.getElementById('loginSection').style.display = 'none';
-    document.getElementById('appSection').style.display = 'block';
-    if (checkBirthdayToday(cachedUser.birthday)) {
-      setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', cachedUser.name + '，生日快樂！🥳', true); }, 600);
-    }
-    // 後台靜默更新（唔阻住用戶）
-    robustFetch(SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'login', idToken: idToken })
-    }).then(function(r){ return r.json(); }).then(function(data){
-      if (data.success) { session.birthday = data.birthday || ""; saveSession(); }
-    }).catch(function(){});
+  if (!payload || !payload.email) {
+    showStatus(statusBox, '✗ Google登入失敗，請重試', false);
     return;
   }
+  var tokenEmail = payload.email;
+  var cachedUser = loadCachedUser();
 
-  // 新用戶或唔match，要等後台驗證
-  showStatus(statusBox, '驗證身份中...', true);
+  // 即刻顯示打卡畫面（唔等後台）
+  var displayName = (cachedUser && cachedUser.email.toLowerCase() === tokenEmail.toLowerCase())
+    ? cachedUser.name
+    : (payload.name || tokenEmail);
+  var displayBirthday = (cachedUser && cachedUser.email.toLowerCase() === tokenEmail.toLowerCase())
+    ? (cachedUser.birthday || '') : '';
+
+  session = { idToken: idToken, name: displayName, email: tokenEmail, birthday: displayBirthday };
+  document.getElementById('userName').textContent = displayName;
+  document.getElementById('userEmailDisplay').textContent = tokenEmail;
+  document.getElementById('loginSection').style.display = 'none';
+  document.getElementById('appSection').style.display = 'block';
+
+  // 打卡掣暫時禁用，顯示「確認中...」
+  var submitBtn = document.getElementById('submitBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = '確認身份中...';
+
+  // 後台靜默驗證員工係咪已登記
   robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -491,35 +496,52 @@ function handleCredentialResponse(response){
   })
   .then(function(r){ return r.json(); })
   .then(function(data){
-    statusBox.className = 'status';
     if (data.success){
-      session = { idToken: idToken, name: data.name, email: data.email, birthday: data.birthday || "" };
+      // 更新正確嘅員工資料
+      session.name = data.name;
+      session.birthday = data.birthday || '';
       saveSession();
       document.getElementById('userName').textContent = data.name;
-      document.getElementById('userEmailDisplay').textContent = data.email;
-      document.getElementById('loginSection').style.display = 'none';
-      document.getElementById('appSection').style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = '打卡';
       if (data.isBirthday) {
         setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', data.name + '，生日快樂！🥳', true); }, 600);
       }
     } else {
+      // 唔係登記員工，踢返去登入
+      session = null;
+      clearCachedUser();
+      document.getElementById('appSection').style.display = 'none';
+      document.getElementById('loginSection').style.display = 'flex';
+      submitBtn.disabled = false;
+      submitBtn.textContent = '打卡';
       showStatus(statusBox, '✗ ' + data.message, false);
     }
   })
-  .catch(function(err){
-    showStatus(statusBox, '✗ 連線失敗，請重試', false);
-    var existingBtn = document.getElementById('retryLoginBtn');
-    if (!existingBtn) {
-      var retryBtn = document.createElement('button');
-      retryBtn.id = 'retryLoginBtn';
-      retryBtn.textContent = '🔄 重試';
-      retryBtn.style.cssText = 'width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:none;color:var(--text-dim);font-size:14px;cursor:pointer;';
-      retryBtn.onclick = function(){
-        statusBox.className = 'status';
-        this.remove();
-        handleCredentialResponse({ credential: idToken });
-      };
-      statusBox.parentNode.insertBefore(retryBtn, statusBox.nextSibling);
+  .catch(function(){
+    // 後台連唔到，如果係已知員工就放行，否則踢返去
+    if (cachedUser && tokenEmail.toLowerCase() === cachedUser.email.toLowerCase()){
+      session.name = cachedUser.name;
+      session.birthday = cachedUser.birthday || '';
+      document.getElementById('userName').textContent = cachedUser.name;
+      submitBtn.disabled = false;
+      submitBtn.textContent = '打卡';
+    } else {
+      session = null;
+      document.getElementById('appSection').style.display = 'none';
+      document.getElementById('loginSection').style.display = 'flex';
+      submitBtn.disabled = false;
+      submitBtn.textContent = '打卡';
+      showStatus(statusBox, '✗ 連線失敗，請重試', false);
+      var existingBtn = document.getElementById('retryLoginBtn');
+      if (!existingBtn) {
+        var retryBtn = document.createElement('button');
+        retryBtn.id = 'retryLoginBtn';
+        retryBtn.textContent = '🔄 重試';
+        retryBtn.style.cssText = 'width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:none;color:var(--text-dim);font-size:14px;cursor:pointer;';
+        retryBtn.onclick = function(){ statusBox.className='status'; this.remove(); handleCredentialResponse({credential:idToken}); };
+        statusBox.parentNode.insertBefore(retryBtn, statusBox.nextSibling);
+      }
     }
   });
 }
@@ -529,6 +551,7 @@ document.getElementById('logoutBtn').onclick = function(){
   currentSelectedType = null;
   document.querySelectorAll('.type-btn').forEach(function(b){ b.classList.remove('active'); });
   clearCachedUser();
+  clearCachedToken();
   google.accounts.id.disableAutoSelect();
   document.getElementById('appSection').style.display = 'none';
   document.getElementById('loginSection').style.display = 'flex';
@@ -552,39 +575,20 @@ document.getElementById('submitBtn').onclick = function(){
     return;
   }
 
-  // 優先用緩存token（55分鐘內有效），冇緩存先嘗試靜默攞新token
+  // 優先用緩存token（localStorage或記憶體，55分鐘內有效）
   var cachedTok = getValidToken();
   if (cachedTok) {
     session.idToken = cachedTok;
     doCheckIn(remark);
-  } else if (session.idToken) {
-    setCachedToken(session.idToken);
-    doCheckIn(remark);
   } else {
-    var btn = document.getElementById('submitBtn');
-    btn.disabled = true;
-    btn.textContent = '驗證身份中...';
-    google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: function(response){
-        setCachedToken(response.credential);
-        session.idToken = response.credential;
-        doCheckIn(remark);
-      },
-      auto_select: true
-    });
-    google.accounts.id.prompt(function(notification){
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()){
-        btn.disabled = false;
-        btn.textContent = '打卡';
-        clearCachedUser();
-        session = null;
-        document.getElementById('appSection').style.display = 'none';
-        document.getElementById('loginSection').style.display = 'flex';
-        initGoogleButton();
-        showStatus(document.getElementById('loginStatus'), '請重新登入一次', false);
-      }
-    });
+    // Token過期，要求重新登入（唔靠google.accounts.id.prompt，直接返登入畫面）
+    clearCachedUser();
+    clearCachedToken();
+    session = null;
+    document.getElementById('appSection').style.display = 'none';
+    document.getElementById('loginSection').style.display = 'flex';
+    initGoogleButton();
+    showStatus(document.getElementById('loginStatus'), '登入已過期，請重新登入', false);
   }
 };
 
