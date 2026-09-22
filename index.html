@@ -443,12 +443,47 @@ function initGoogleSilent(){
   } catch(e){}
 }
 
+function decodeJwt(token){
+  try {
+    var payload = token.split('.')[1];
+    return JSON.parse(decodeURIComponent(escape(atob(payload.replace(/-/g,'+').replace(/_/g,'/')))));
+  } catch(e){ return null; }
+}
+
 function handleCredentialResponse(response){
   var idToken = response.credential;
-  setCachedToken(idToken); // 緩存token
+  setCachedToken(idToken);
   var statusBox = document.getElementById('loginStatus');
   statusBox.className = 'status';
 
+  // 解碼token攞email，唔使等後台
+  var payload = decodeJwt(idToken);
+  var tokenEmail = payload ? (payload.email || '') : '';
+  var cachedUser = loadCachedUser();
+
+  // 如果係返回用戶（email match），即刻顯示打卡畫面，後台靜默驗證
+  if (cachedUser && tokenEmail && tokenEmail.toLowerCase() === cachedUser.email.toLowerCase()) {
+    session = { idToken: idToken, name: cachedUser.name, email: cachedUser.email, birthday: cachedUser.birthday || "" };
+    document.getElementById('userName').textContent = cachedUser.name;
+    document.getElementById('userEmailDisplay').textContent = cachedUser.email;
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('appSection').style.display = 'block';
+    if (checkBirthdayToday(cachedUser.birthday)) {
+      setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', cachedUser.name + '，生日快樂！🥳', true); }, 600);
+    }
+    // 後台靜默更新（唔阻住用戶）
+    robustFetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'login', idToken: idToken })
+    }).then(function(r){ return r.json(); }).then(function(data){
+      if (data.success) { session.birthday = data.birthday || ""; saveSession(); }
+    }).catch(function(){});
+    return;
+  }
+
+  // 新用戶或唔match，要等後台驗證
+  showStatus(statusBox, '驗證身份中...', true);
   robustFetch(SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -456,6 +491,7 @@ function handleCredentialResponse(response){
   })
   .then(function(r){ return r.json(); })
   .then(function(data){
+    statusBox.className = 'status';
     if (data.success){
       session = { idToken: idToken, name: data.name, email: data.email, birthday: data.birthday || "" };
       saveSession();
@@ -463,7 +499,6 @@ function handleCredentialResponse(response){
       document.getElementById('userEmailDisplay').textContent = data.email;
       document.getElementById('loginSection').style.display = 'none';
       document.getElementById('appSection').style.display = 'block';
-      // 生日check（登入就顯示）
       if (data.isBirthday) {
         setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', data.name + '，生日快樂！🥳', true); }, 600);
       }
@@ -473,7 +508,6 @@ function handleCredentialResponse(response){
   })
   .catch(function(err){
     showStatus(statusBox, '✗ 連線失敗，請重試', false);
-    // 顯示重試掣，唔使再撳Google登入
     var existingBtn = document.getElementById('retryLoginBtn');
     if (!existingBtn) {
       var retryBtn = document.createElement('button');
