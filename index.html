@@ -529,14 +529,6 @@ function handleCredentialResponse(response){
   }
 }
 
-  // 後台靜默驗證員工係咪已登記
-  robustFetch(SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: 'login', idToken: idToken })
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(data){
 document.getElementById('logoutBtn').onclick = function(){
   session = null;
   currentSelectedType = null;
