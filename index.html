@@ -461,7 +461,6 @@ function handleCredentialResponse(response){
   var statusBox = document.getElementById('loginStatus');
   statusBox.className = 'status';
 
-  // 即刻解碼Google token（Google已驗證，可信）
   var payload = decodeJwt(idToken);
   if (!payload || !payload.email) {
     showStatus(statusBox, '✗ Google登入失敗，請重試', false);
@@ -469,24 +468,66 @@ function handleCredentialResponse(response){
   }
   var tokenEmail = payload.email;
   var cachedUser = loadCachedUser();
+  var isReturningUser = cachedUser && cachedUser.email.toLowerCase() === tokenEmail.toLowerCase();
 
-  // 即刻顯示打卡畫面（唔等後台）
-  var displayName = (cachedUser && cachedUser.email.toLowerCase() === tokenEmail.toLowerCase())
-    ? cachedUser.name
-    : (payload.name || tokenEmail);
-  var displayBirthday = (cachedUser && cachedUser.email.toLowerCase() === tokenEmail.toLowerCase())
-    ? (cachedUser.birthday || '') : '';
+  if (isReturningUser) {
+    // 已知員工 → 即刻入打卡畫面，打卡掣即刻可用
+    session = { idToken: idToken, name: cachedUser.name, email: cachedUser.email, birthday: cachedUser.birthday || "" };
+    document.getElementById('userName').textContent = cachedUser.name;
+    document.getElementById('userEmailDisplay').textContent = cachedUser.email;
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('appSection').style.display = 'block';
+    if (checkBirthdayToday(cachedUser.birthday)) {
+      setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', cachedUser.name + '，生日快樂！🥳', true); }, 600);
+    }
+    // 後台靜默更新生日等資料（唔影響打卡）
+    robustFetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'login', idToken: idToken })
+    }).then(function(r){ return r.json(); }).then(function(data){
+      if (data.success){ session.birthday = data.birthday||''; saveSession(); }
+    }).catch(function(){});
 
-  session = { idToken: idToken, name: displayName, email: tokenEmail, birthday: displayBirthday };
-  document.getElementById('userName').textContent = displayName;
-  document.getElementById('userEmailDisplay').textContent = tokenEmail;
-  document.getElementById('loginSection').style.display = 'none';
-  document.getElementById('appSection').style.display = 'block';
+  } else {
+    // 全新用戶 → 需要後台驗證係咪登記員工
+    showStatus(statusBox, '驗證中...', true);
+    var submitBtn = document.getElementById('submitBtn');
+    var done = false;
+    var t = setTimeout(function(){
+      if (done) return; done = true;
+      showStatus(statusBox, '✗ 連線逾時，請重試', false);
+    }, 10000);
 
-  // 打卡掣暫時禁用，顯示「確認中...」
-  var submitBtn = document.getElementById('submitBtn');
-  submitBtn.disabled = true;
-  submitBtn.textContent = '確認身份中...';
+    robustFetch(SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'login', idToken: idToken })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if (done) return; done = true; clearTimeout(t);
+      statusBox.className = 'status';
+      if (data.success){
+        session = { idToken: idToken, name: data.name, email: data.email, birthday: data.birthday||"" };
+        saveSession();
+        document.getElementById('userName').textContent = data.name;
+        document.getElementById('userEmailDisplay').textContent = data.email;
+        document.getElementById('loginSection').style.display = 'none';
+        document.getElementById('appSection').style.display = 'block';
+        if (data.isBirthday) {
+          setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', data.name+'，生日快樂！🥳', true); }, 600);
+        }
+      } else {
+        showStatus(statusBox, '✗ ' + data.message, false);
+      }
+    })
+    .catch(function(){
+      if (done) return; done = true; clearTimeout(t);
+      showStatus(statusBox, '✗ 連線失敗，請重試', false);
+    });
+  }
+}
 
   // 後台靜默驗證員工係咪已登記
   robustFetch(SCRIPT_URL, {
@@ -496,56 +537,6 @@ function handleCredentialResponse(response){
   })
   .then(function(r){ return r.json(); })
   .then(function(data){
-    if (data.success){
-      // 更新正確嘅員工資料
-      session.name = data.name;
-      session.birthday = data.birthday || '';
-      saveSession();
-      document.getElementById('userName').textContent = data.name;
-      submitBtn.disabled = false;
-      submitBtn.textContent = '打卡';
-      if (data.isBirthday) {
-        setTimeout(function(){ showToast('🎂✨', 'Happy Birthday!', data.name + '，生日快樂！🥳', true); }, 600);
-      }
-    } else {
-      // 唔係登記員工，踢返去登入
-      session = null;
-      clearCachedUser();
-      document.getElementById('appSection').style.display = 'none';
-      document.getElementById('loginSection').style.display = 'flex';
-      submitBtn.disabled = false;
-      submitBtn.textContent = '打卡';
-      showStatus(statusBox, '✗ ' + data.message, false);
-    }
-  })
-  .catch(function(){
-    // 後台連唔到，如果係已知員工就放行，否則踢返去
-    if (cachedUser && tokenEmail.toLowerCase() === cachedUser.email.toLowerCase()){
-      session.name = cachedUser.name;
-      session.birthday = cachedUser.birthday || '';
-      document.getElementById('userName').textContent = cachedUser.name;
-      submitBtn.disabled = false;
-      submitBtn.textContent = '打卡';
-    } else {
-      session = null;
-      document.getElementById('appSection').style.display = 'none';
-      document.getElementById('loginSection').style.display = 'flex';
-      submitBtn.disabled = false;
-      submitBtn.textContent = '打卡';
-      showStatus(statusBox, '✗ 連線失敗，請重試', false);
-      var existingBtn = document.getElementById('retryLoginBtn');
-      if (!existingBtn) {
-        var retryBtn = document.createElement('button');
-        retryBtn.id = 'retryLoginBtn';
-        retryBtn.textContent = '🔄 重試';
-        retryBtn.style.cssText = 'width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:none;color:var(--text-dim);font-size:14px;cursor:pointer;';
-        retryBtn.onclick = function(){ statusBox.className='status'; this.remove(); handleCredentialResponse({credential:idToken}); };
-        statusBox.parentNode.insertBefore(retryBtn, statusBox.nextSibling);
-      }
-    }
-  });
-}
-
 document.getElementById('logoutBtn').onclick = function(){
   session = null;
   currentSelectedType = null;
